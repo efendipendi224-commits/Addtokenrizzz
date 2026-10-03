@@ -20,22 +20,17 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq unzip curl wget file
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip curl wget
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
@@ -43,46 +38,32 @@ jobs:
 
       - name: Download ZIP
         run: |
-          echo "Downloading..."
-          for i in 1 2 3 4 5; do
-            curl -L -f --retry 5 --retry-delay 3 -o project.zip "${{ github.event.inputs.zip_url }}" && break
-            echo "Retry $i..."
-            sleep 5
-          done
-          if [ ! -f project.zip ]; then
-            wget -q --tries=5 -O project.zip "${{ github.event.inputs.zip_url }}"
-          fi
+          curl -L -f --retry 5 --retry-delay 3 -o project.zip "${{ github.event.inputs.zip_url }}" || wget -q --tries=5 -O project.zip "${{ github.event.inputs.zip_url }}"
           ls -lh project.zip
 
-      - name: Verify and Extract
+      - name: Extract
         run: |
-          unzip -t project.zip || { rm -f project.zip; wget -O project.zip "${{ github.event.inputs.zip_url }}"; unzip -t project.zip; }
+          unzip -t project.zip || exit 1
           mkdir -p source
           unzip -o project.zip -d source
-          echo "Extracted. Looking for pubspec.yaml..."
           ls -la source/
 
       - name: Find Flutter Root
         run: |
           PUBSPEC=$(find source -name "pubspec.yaml" -not -path "*/build/*" -not -path "*/.dart_tool/*" | head -1)
-          if [ -z "$PUBSPEC" ]; then
-            echo "ERROR: pubspec.yaml not found"
-            find source -maxdepth 3 -type f | head -30
-            exit 1
-          fi
+          if [ -z "$PUBSPEC" ]; then echo "pubspec.yaml tidak ada"; exit 1; fi
           FLUTTER_DIR=$(dirname "$PUBSPEC")
           echo "FLUTTER_DIR=$FLUTTER_DIR" >> $GITHUB_ENV
           echo "Found: $FLUTTER_DIR"
 
-      - name: Flutter Build
+      - name: Build APK
         run: |
           cd "$FLUTTER_DIR"
           flutter pub get
           flutter build apk --${{ github.event.inputs.build_type }}
 
-      - name: Upload APK
+      - uses: actions/upload-artifact@v4
         if: success()
-        uses: actions/upload-artifact@v4
         with:
           name: apk-${{ github.event.inputs.tag }}
           path: ${{ env.FLUTTER_DIR }}/build/app/outputs/flutter-apk/*.apk
