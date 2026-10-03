@@ -1,0 +1,61 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'URL ZIP project Flutter'
+        required: true
+      tag:
+        description: 'Tag build'
+        required: true
+      build_type:
+        description: 'debug atau release'
+        required: true
+        default: 'release'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Download ZIP Project
+        run: |
+          curl -L "${{ github.event.inputs.zip_url }}" -o project.zip
+
+      - name: Extract ZIP
+        run: |
+          mkdir project
+          unzip project.zip -d project
+
+      - name: Flutter Build APK
+        run: |
+          cd project
+          if [ -f "pubspec.yaml" ]; then
+            flutter pub get
+            flutter build apk --${{ github.event.inputs.build_type }}
+          else
+            echo "pubspec.yaml tidak ditemukan!"
+            exit 1
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.event.inputs.tag }}
+          path: project/build/app/outputs/flutter-apk/*.apk
