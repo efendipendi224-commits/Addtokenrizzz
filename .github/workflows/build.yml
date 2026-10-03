@@ -33,29 +33,73 @@ jobs:
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
+          cache: true
 
       - name: Download ZIP Project
         run: |
+          echo "📥 Downloading ZIP..."
           curl -L "${{ github.event.inputs.zip_url }}" -o project.zip
+          echo "✅ Download selesai. Size:"
+          ls -lh project.zip
 
       - name: Extract ZIP
         run: |
-          mkdir project
-          unzip project.zip -d project
+          echo "📦 Extracting ZIP..."
+          mkdir -p source
+          unzip -o project.zip -d source
+          echo "✅ Extract selesai."
+          echo "=== Isi folder source: ==="
+          ls -la source/
+
+      - name: Find Flutter Project Root
+        id: find_flutter
+        run: |
+          echo "🔍 Mencari pubspec.yaml..."
+          PUBSPEC=$(find source -name "pubspec.yaml" -not -path "*/build/*" -not -path "*/.dart_tool/*" | head -1)
+          
+          if [ -z "$PUBSPEC" ]; then
+            echo "❌ ERROR: pubspec.yaml tidak ditemukan di dalam ZIP!"
+            echo "📂 Struktur folder ZIP kamu:"
+            find source -maxdepth 3 -type f | head -30
+            exit 1
+          fi
+          
+          FLUTTER_DIR=$(dirname "$PUBSPEC")
+          echo "✅ pubspec.yaml ditemukan di: $FLUTTER_DIR"
+          echo "FLUTTER_DIR=$FLUTTER_DIR" >> $GITHUB_ENV
+          echo "flutter_dir=$FLUTTER_DIR" >> $GITHUB_OUTPUT
+
+      - name: Flutter Pub Get
+        run: |
+          cd "$FLUTTER_DIR"
+          echo "📦 Running flutter pub get di $FLUTTER_DIR"
+          flutter pub get
 
       - name: Flutter Build APK
         run: |
-          cd project
-          if [ -f "pubspec.yaml" ]; then
-            flutter pub get
-            flutter build apk --${{ github.event.inputs.build_type }}
-          else
-            echo "pubspec.yaml tidak ditemukan!"
-            exit 1
-          fi
+          cd "$FLUTTER_DIR"
+          echo "🔨 Building APK (${{ github.event.inputs.build_type }})..."
+          flutter build apk --${{ github.event.inputs.build_type }}
+          echo "✅ Build sukses!"
+          echo "=== Hasil APK: ==="
+          ls -lh build/app/outputs/flutter-apk/
 
       - name: Upload APK Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ github.event.inputs.tag }}
-          path: project/build/app/outputs/flutter-apk/*.apk
+          path: ${{ env.FLUTTER_DIR }}/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+
+      - name: Show Error Log (kalau gagal)
+        if: failure()
+        run: |
+          echo "================================"
+          echo "[RESULT_ANALYZE]"
+          echo "================================"
+          echo "❌ Build gagal. Cek langkah di atas untuk detail."
+          echo "📂 Isi folder:"
+          find source -maxdepth 2 -type d
+          echo "================================"
+          echo "[END_RESULT_ANALYZE]"
