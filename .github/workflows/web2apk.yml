@@ -1,0 +1,46 @@
+name: Build Web to APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      web_url:
+        description: 'URL website'
+        required: true
+      app_name:
+        description: 'Nama aplikasi'
+        required: true
+      icon_url:
+        description: 'URL icon'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Build WebView APK
+        run: |
+          echo "Web URL: ${{ github.event.inputs.web_url }}"
+          echo "App Name: ${{ github.event.inputs.app_name }}"
+          echo "Icon URL: ${{ github.event.inputs.icon_url }}"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2apk-result
+          path: build/app/outputs/flutter-apk/*.apk
