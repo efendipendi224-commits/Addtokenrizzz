@@ -17,15 +17,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install unzip
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip curl
+          sudo apt-get install -y unzip curl wget file
+          echo "✅ Dependencies installed"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -40,24 +42,39 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Download ZIP Project
+      - name: Verify Flutter
         run: |
-          echo "📥 Download dari: ${{ github.event.inputs.zip_url }}"
-          curl -L -f --retry 3 --retry-delay 5 \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          flutter --version
+          dart --version
+
+      - name: Download ZIP
+        id: download
+        run: |
+          echo "URL: ${{ github.event.inputs.zip_url }}"
+          echo "Downloading..."
+          
+          curl -L -f --retry 5 --retry-delay 5 --retry-all-errors \
             -o project.zip "${{ github.event.inputs.zip_url }}" || {
-              echo "❌ Gagal download tanpa auth, coba tanpa header..."
-              curl -L -f --retry 3 -o project.zip "${{ github.event.inputs.zip_url }}"
-            }
-          echo "✅ Size:"
+            echo "Curl failed, trying wget..."
+            wget -q --tries=5 -O project.zip "${{ github.event.inputs.zip_url }}"
+          }
+          
           ls -lh project.zip
           file project.zip
+          
+          SIZE=$(stat -c%s project.zip)
+          if [ "$SIZE" -lt 100 ]; then
+            echo "❌ File terlalu kecil ($SIZE bytes)"
+            exit 1
+          fi
 
       - name: Verify ZIP
         run: |
-          if ! unzip -t project.zip; then
-            echo "❌ ZIP korup! Coba download ulang..."
-            exit 1
+          if ! unzip -t project.zip > /dev/null 2>&1; then
+            echo "❌ ZIP korup, download ulang..."
+            rm -f project.zip
+            wget -q --tries=5 -O project.zip "${{ github.event.inputs.zip_url }}"
+            unzip -t project.zip || { echo "❌ Tetap korup"; exit 1; }
           fi
           echo "✅ ZIP valid"
 
@@ -66,20 +83,28 @@ jobs:
           mkdir -p source
           unzip -o project.zip -d source
           echo "✅ Extract selesai"
+          echo "=== Isi source ==="
           ls -la source/
+          echo "=== Max depth 2 ==="
+          find source -maxdepth 2 -type d
 
       - name: Find Flutter Project Root
         id: find_flutter
         run: |
-          PUBSPEC=$(find source -name "pubspec.yaml" -not -path "*/build/*" -not -path "*/.dart_tool/*" | head -1)
+          PUBSPEC=$(find source -name "pubspec.yaml" -not -path "*/build/*" -not -path "*/.dart_tool/*" -not -path "*/node_modules/*" | head -1)
+          
           if [ -z "$PUBSPEC" ]; then
             echo "❌ pubspec.yaml tidak ditemukan!"
-            find source -maxdepth 3 -type f | head -30
+            echo "=== Struktur folder ==="
+            find source -maxdepth 3 -type f | head -50
             exit 1
           fi
+          
           FLUTTER_DIR=$(dirname "$PUBSPEC")
-          echo "✅ Flutter dir: $FLUTTER_DIR"
+          echo "✅ pubspec.yaml di: $FLUTTER_DIR"
           echo "FLUTTER_DIR=$FLUTTER_DIR" >> $GITHUB_ENV
+          echo "flutter_dir=$FLUTTER_DIR" >> $GITHUB_OUTPUT
+          cat "$PUBSPEC" | head -20
 
       - name: Flutter Pub Get
         run: |
@@ -89,7 +114,10 @@ jobs:
       - name: Flutter Build APK
         run: |
           cd "$FLUTTER_DIR"
-          flutter build apk --${{ github.event.inputs.build_type }}
+          echo "Building APK (${{ github.event.inputs.build_type }})..."
+          flutter build apk --${{ github.event.inputs.build_type }} --verbose
+          echo "=== Hasil build ==="
+          ls -lh build/app/outputs/flutter-apk/
 
       - name: Upload APK Artifact
         if: success()
@@ -98,16 +126,15 @@ jobs:
           name: apk-${{ github.event.inputs.tag }}
           path: ${{ env.FLUTTER_DIR }}/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
+          retention-days: 7
 
-      - name: Show Error Log
+      - name: Show Failure Info
         if: failure()
         run: |
-          echo "================================"
           echo "[RESULT_ANALYZE]"
-          echo "Step yang gagal: cek langkah di atas"
-          echo "File ZIP size:"
-          ls -lh project.zip 2>/dev/null || echo "project.zip tidak ada"
-          echo "File type:"
-          file project.zip 2>/dev/null
-          echo "================================"
+          echo "Step gagal: cek langkah di atas"
+          echo "ZIP size: $(stat -c%s project.zip 2>/dev/null || echo 'N/A') bytes"
+          echo "ZIP type: $(file project.zip 2>/dev/null || echo 'N/A')"
+          echo "Source folder:"
+          ls -la source/ 2>/dev/null || echo "source tidak ada"
           echo "[END_RESULT_ANALYZE]"
