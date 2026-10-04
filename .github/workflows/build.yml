@@ -1,1 +1,69 @@
+name: Build Flutter APK
 
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'URL ZIP'
+        required: true
+      tag:
+        description: 'Tag'
+        required: true
+      build_type:
+        description: 'debug/release'
+        required: true
+        default: 'release'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip curl wget
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Download ZIP
+        run: |
+          curl -L -f --retry 5 --retry-delay 3 -o project.zip "${{ github.event.inputs.zip_url }}" || wget -q --tries=5 -O project.zip "${{ github.event.inputs.zip_url }}"
+          ls -lh project.zip
+
+      - name: Extract
+        run: |
+          unzip -t project.zip || exit 1
+          mkdir -p source
+          unzip -o project.zip -d source
+          ls -la source/
+
+      - name: Find Flutter Root
+        run: |
+          PUBSPEC=$(find source -name "pubspec.yaml" -not -path "*/build/*" -not -path "*/.dart_tool/*" | head -1)
+          if [ -z "$PUBSPEC" ]; then echo "pubspec.yaml tidak ada"; exit 1; fi
+          FLUTTER_DIR=$(dirname "$PUBSPEC")
+          echo "FLUTTER_DIR=$FLUTTER_DIR" >> $GITHUB_ENV
+
+      - name: Build APK
+        run: |
+          cd "$FLUTTER_DIR"
+          flutter pub get
+          flutter build apk --${{ github.event.inputs.build_type }}
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: apk-${{ github.event.inputs.tag }}
+          path: ${{ env.FLUTTER_DIR }}/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
